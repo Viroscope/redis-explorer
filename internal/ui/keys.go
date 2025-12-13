@@ -52,6 +52,8 @@ type KeyBrowser struct {
 	delimiter     string
 	currentScope  string
 	debounceTimer *time.Timer
+	loadingBar    *widget.ProgressBarInfinite
+	isLoading     bool
 }
 
 // NewKeyBrowser creates a new key browser panel
@@ -96,7 +98,10 @@ func (kb *KeyBrowser) buildUI() {
 			kb.debounceTimer.Stop()
 		}
 		kb.debounceTimer = time.AfterFunc(300*time.Millisecond, func() {
-			kb.filterKeys()
+			// Update UI on main thread
+			fyne.Do(func() {
+				kb.filterKeys()
+			})
 		})
 	}
 
@@ -115,19 +120,23 @@ func (kb *KeyBrowser) buildUI() {
 	// Content area that holds either list or tree
 	kb.contentArea = container.NewStack(kb.keyList)
 
+	// Loading indicator
+	kb.loadingBar = widget.NewProgressBarInfinite()
+	kb.loadingBar.Hide()
+
 	// View toggle button
-	kb.viewToggle = widget.NewButtonWithIcon("", theme.ListIcon(), func() {
+	kb.viewToggle = widget.NewButtonWithIcon("View", theme.ListIcon(), func() {
 		kb.toggleView()
 	})
 	kb.viewToggle.Importance = widget.LowImportance
 
 	// Buttons
-	refreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
+	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
 		kb.LoadKeys()
 	})
 	refreshBtn.Importance = widget.LowImportance
 
-	newKeyBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+	newKeyBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
 		if kb.client == nil {
 			return
 		}
@@ -137,7 +146,7 @@ func (kb *KeyBrowser) buildUI() {
 	})
 	newKeyBtn.Importance = widget.LowImportance
 
-	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+	deleteBtn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
 		kb.deleteSelectedKey()
 	})
 	deleteBtn.Importance = widget.LowImportance
@@ -172,6 +181,7 @@ func (kb *KeyBrowser) buildUI() {
 		scopeBar,
 		searchBar,
 		buttonBar,
+		kb.loadingBar,
 	)
 
 	kb.container = container.NewBorder(header, nil, nil, nil, kb.contentArea)
@@ -577,7 +587,7 @@ func (kb *KeyBrowser) SetClient(client *redis.Client) {
 	kb.client = client
 }
 
-// LoadKeys loads keys from the connected Redis server
+// LoadKeys loads keys from the connected Redis server asynchronously
 func (kb *KeyBrowser) LoadKeys() {
 	if kb.client == nil {
 		kb.keys = nil
@@ -595,14 +605,40 @@ func (kb *KeyBrowser) LoadKeys() {
 		return
 	}
 
-	keys, err := kb.client.GetAllKeys("*", 10000)
-	if err != nil {
-		ShowErrorDialog(kb.window, "Error loading keys", err)
+	// Prevent multiple concurrent loads
+	if kb.isLoading {
 		return
 	}
 
-	kb.keys = keys
-	kb.filterKeys()
+	kb.isLoading = true
+	kb.loadingBar.Show()
+	kb.loadingBar.Start()
+	if kb.countLabel != nil {
+		kb.countLabel.SetText("Loading...")
+	}
+
+	// Load keys in background goroutine
+	go func() {
+		keys, err := kb.client.GetAllKeys("*", 10000)
+
+		// Update UI on main thread using fyne.Do
+		fyne.Do(func() {
+			kb.isLoading = false
+			kb.loadingBar.Stop()
+			kb.loadingBar.Hide()
+
+			if err != nil {
+				if kb.countLabel != nil {
+					kb.countLabel.SetText("Error")
+				}
+				ShowErrorDialog(kb.window, "Error loading keys", err)
+				return
+			}
+
+			kb.keys = keys
+			kb.filterKeys()
+		})
+	}()
 }
 
 // SetOnKeySelected sets the callback for key selection

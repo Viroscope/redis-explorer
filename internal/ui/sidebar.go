@@ -98,7 +98,7 @@ func (s *Sidebar) buildUI() {
 		}
 	})
 
-	addBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+	addBtn := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
 		ShowConnectionDialog(s.window, nil, func(conn models.ServerConnection) {
 			config.AddConnection(conn)
 			s.loadConnections()
@@ -106,7 +106,7 @@ func (s *Sidebar) buildUI() {
 		})
 	})
 
-	editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+	editBtn := widget.NewButtonWithIcon("Edit", theme.DocumentCreateIcon(), func() {
 		if s.selectedID == "" {
 			return
 		}
@@ -125,7 +125,7 @@ func (s *Sidebar) buildUI() {
 		}
 	})
 
-	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+	deleteBtn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
 		if s.selectedID == "" || s.selectedID == "default" {
 			return
 		}
