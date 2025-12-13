@@ -11,6 +11,7 @@ redis-explorer.exe
 /build/
 /dist/
 /bin/
+/releases/
 
 # Test binary, built with `go test -c`
 *.test

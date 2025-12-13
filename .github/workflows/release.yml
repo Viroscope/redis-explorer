@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.0'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      env:
+        GOOS: linux
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+      run: |
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-linux-${GOARCH}
+        go build -v -ldflags="-s -w" -o ${OUTPUT_NAME} .
+        tar -czf ${OUTPUT_NAME}.tar.gz ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: redis-explorer-linux-${{ matrix.goarch }}
+        path: "*.tar.gz"
+        retention-days: 1
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        goarch: [amd64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.0'
+
+    - name: Get version
+      id: version
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      shell: bash
+      env:
+        GOOS: windows
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+      run: |
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-windows-${GOARCH}.exe
+        go build -v -ldflags="-s -w -H=windowsgui" -o ${OUTPUT_NAME} .
+        7z a ${OUTPUT_NAME%.exe}.zip ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: redis-explorer-windows-${{ matrix.goarch }}
+        path: "*.zip"
+        retention-days: 1
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.0'
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      env:
+        GOOS: darwin
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+      run: |
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-${GOARCH}
+        go build -v -ldflags="-s -w" -o ${OUTPUT_NAME} .
+        tar -czf ${OUTPUT_NAME}.tar.gz ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: redis-explorer-darwin-${{ matrix.goarch }}
+        path: "*.tar.gz"
+        retention-days: 1
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Display structure of downloaded files
+      run: ls -R artifacts/
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
+        ls -lh release-assets/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Redis Explorer ${{ steps.version.outputs.VERSION }}
+        body: |
+          ## Redis Explorer ${{ steps.version.outputs.VERSION }}
+          
+          A powerful, cross-platform GUI client for Redis databases built with Go and Fyne.
+          
+          ### Downloads
+          
+          Choose the appropriate binary for your platform:
+          
+          - **Linux (x64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz`
+          - **macOS (Intel)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz`
+          - **macOS (Apple Silicon)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz`
+          - **Windows (x64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-windows-amd64.zip`
+          
+          ### Installation
+          
+          #### Linux/macOS
+          1. Download the appropriate `.tar.gz` file for your platform
+          2. Extract: `tar -xzf redis-explorer-*.tar.gz`
+          3. Run: `./redis-explorer-*`
+          
+          #### Windows
+          1. Download the `.zip` file
+          2. Extract the contents
+          3. Run `redis-explorer-*.exe`
+          
+          ### Features
+          - Connection Management with multiple servers
+          - Key Browser with list and tree views
+          - Full support for all Redis data types
+          - Server Information dashboard
+          - Multiple themes (Dark, Light, Nord, Dracula, Solarized)
+          
+          For more information, see the [README](https://github.com/Viroscope/redis-explorer/blob/main/README.md).
+        files: release-assets/*
+        draft: false
+        prerelease: false

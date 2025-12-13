@@ -45,7 +45,32 @@ A powerful, cross-platform GUI client for Redis databases built with Go and Fyne
 
 ## Installation
 
-### Prerequisites
+### Download Pre-built Binaries
+
+Download the latest release for your platform from the [Releases](https://github.com/Viroscope/redis-explorer/releases) page.
+
+Available for:
+- **Linux** (x64)
+- **macOS** (Intel, Apple Silicon)
+- **Windows** (x64)
+
+#### Linux/macOS
+```bash
+# Download and extract
+tar -xzf redis-explorer-*.tar.gz
+
+# Run
+./redis-explorer-*
+```
+
+#### Windows
+1. Download the `.zip` file from releases
+2. Extract the contents
+3. Run `redis-explorer-*.exe`
+
+### Build from Source
+
+#### Prerequisites
 
 - Go 1.21 or later
 - GCC (for CGO)
@@ -63,19 +88,40 @@ sudo apt-get install -y libgl1-mesa-dev xorg-dev
 sudo dnf install -y mesa-libGL-devel libXcursor-devel libXrandr-devel libXinerama-devel libXi-devel libXxf86vm-devel
 ```
 
-### Build from Source
+#### Build and Run
 
 ```bash
 git clone https://github.com/Viroscope/redis-explorer.git
 cd redis-explorer
 go build -o redis-explorer .
-```
-
-### Run
-
-```bash
 ./redis-explorer
 ```
+
+## Releasing
+
+### Automated Releases
+
+This project uses GitHub Actions to automatically build and release binaries for Linux, macOS, and Windows when a version tag is pushed:
+
+```bash
+git tag -a v1.0.1 -m "Release v1.0.1"
+git push origin v1.0.1
+```
+
+The workflow will automatically:
+1. Build binaries for Linux (amd64), macOS (amd64, arm64), and Windows (amd64)
+2. Create compressed archives with the binary, README, and icon
+3. Create a GitHub release with all the artifacts
+
+### Manual Builds
+
+To build a release for your current platform:
+
+```bash
+./build.sh v1.0.0
+```
+
+This will create a release package in the `./releases` directory.
 
 ## Usage
 
