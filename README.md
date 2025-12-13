@@ -50,7 +50,7 @@ A powerful, cross-platform GUI client for Redis databases built with Go and Fyne
 Download the latest release for your platform from the [Releases](https://github.com/Viroscope/redis-explorer/releases) page.
 
 Available for:
-- **Linux** (x64, ARM64)
+- **Linux** (x64)
 - **macOS** (Intel, Apple Silicon)
 - **Windows** (x64)
 
