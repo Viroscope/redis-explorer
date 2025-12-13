@@ -9,17 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Release
+  build-linux:
+    name: Build Linux
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin]
-        goarch: [amd64, arm64]
-        exclude:
-          # Exclude ARM64 for Windows (less common)
-          - goos: windows
-            goarch: arm64
+        goarch: [amd64]
     
     steps:
     - name: Checkout code
@@ -30,11 +25,10 @@ jobs:
       with:
         go-version: '1.25.0'
 
-    - name: Install Linux dependencies
-      if: matrix.goos == 'linux'
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgl1-mesa-dev xorg-dev gcc-aarch64-linux-gnu
+        sudo apt-get install -y libgl1-mesa-dev xorg-dev
 
     - name: Get version
       id: version
@@ -42,48 +36,103 @@ jobs:
 
     - name: Build
       env:
-        GOOS: ${{ matrix.goos }}
+        GOOS: linux
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 1
       run: |
-        if [ "$GOOS" = "linux" ] && [ "$GOARCH" = "arm64" ]; then
-          export CC=aarch64-linux-gnu-gcc
-        elif [ "$GOOS" = "darwin" ]; then
-          # For macOS, we need to disable CGO for cross-compilation
-          export CGO_ENABLED=0
-        elif [ "$GOOS" = "windows" ]; then
-          # For Windows, we need to disable CGO for cross-compilation
-          export CGO_ENABLED=0
-        fi
-        
-        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-${GOOS}-${GOARCH}
-        if [ "$GOOS" = "windows" ]; then
-          OUTPUT_NAME=${OUTPUT_NAME}.exe
-        fi
-        
-        go build -v -o ${OUTPUT_NAME} .
-        
-        # Create a tar.gz for non-Windows
-        if [ "$GOOS" != "windows" ]; then
-          tar -czf ${OUTPUT_NAME}.tar.gz ${OUTPUT_NAME} README.md icon.png
-          rm ${OUTPUT_NAME}
-        else
-          zip ${OUTPUT_NAME}.zip ${OUTPUT_NAME} README.md icon.png
-          rm ${OUTPUT_NAME}
-        fi
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-linux-${GOARCH}
+        go build -v -ldflags="-s -w" -o ${OUTPUT_NAME} .
+        tar -czf ${OUTPUT_NAME}.tar.gz ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: redis-explorer-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: |
-          *.tar.gz
-          *.zip
+        name: redis-explorer-linux-${{ matrix.goarch }}
+        path: "*.tar.gz"
+        retention-days: 1
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        goarch: [amd64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.0'
+
+    - name: Get version
+      id: version
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      shell: bash
+      env:
+        GOOS: windows
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+      run: |
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-windows-${GOARCH}.exe
+        go build -v -ldflags="-s -w -H=windowsgui" -o ${OUTPUT_NAME} .
+        7z a ${OUTPUT_NAME%.exe}.zip ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: redis-explorer-windows-${{ matrix.goarch }}
+        path: "*.zip"
+        retention-days: 1
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.0'
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      env:
+        GOOS: darwin
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+      run: |
+        OUTPUT_NAME=redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-${GOARCH}
+        go build -v -ldflags="-s -w" -o ${OUTPUT_NAME} .
+        tar -czf ${OUTPUT_NAME}.tar.gz ${OUTPUT_NAME} README.md icon.png
+        rm ${OUTPUT_NAME}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: redis-explorer-darwin-${{ matrix.goarch }}
+        path: "*.tar.gz"
         retention-days: 1
 
   release:
     name: Create Release
-    needs: build
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     
     steps:
@@ -122,10 +171,9 @@ jobs:
           Choose the appropriate binary for your platform:
           
           - **Linux (x64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz`
-          - **Linux (ARM64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz`
           - **macOS (Intel)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz`
           - **macOS (Apple Silicon)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz`
-          - **Windows (x64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-windows-amd64.exe.zip`
+          - **Windows (x64)**: `redis-explorer-${{ steps.version.outputs.VERSION }}-windows-amd64.zip`
           
           ### Installation
           

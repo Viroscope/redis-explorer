@@ -97,6 +97,32 @@ go build -o redis-explorer .
 ./redis-explorer
 ```
 
+## Releasing
+
+### Automated Releases
+
+This project uses GitHub Actions to automatically build and release binaries for Linux, macOS, and Windows when a version tag is pushed:
+
+```bash
+git tag -a v1.0.1 -m "Release v1.0.1"
+git push origin v1.0.1
+```
+
+The workflow will automatically:
+1. Build binaries for Linux (amd64), macOS (amd64, arm64), and Windows (amd64)
+2. Create compressed archives with the binary, README, and icon
+3. Create a GitHub release with all the artifacts
+
+### Manual Builds
+
+To build a release for your current platform:
+
+```bash
+./build.sh v1.0.0
+```
+
+This will create a release package in the `./releases` directory.
+
 ## Usage
 
 1. **Connect to Redis**: Click "Connect" in the sidebar to connect to the default localhost:6379, or add a new connection
