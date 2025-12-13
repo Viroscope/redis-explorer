@@ -35,6 +35,9 @@ type KeyBrowser struct {
 	searchEntry   *widget.Entry
 	typeFilter    *widget.Select
 	countLabel    *widget.Label
+	scopeLabel    *widget.Label
+	clearScopeBtn *widget.Button
+	setScopeBtn   *widget.Button
 	client        *redis.Client
 	onKeySelected func(key models.RedisKey)
 	onKeyDeleted  func(key string)
@@ -46,6 +49,7 @@ type KeyBrowser struct {
 	treeRoot      *TreeNode
 	treeNodes     map[string]*TreeNode
 	delimiter     string
+	currentScope  string
 }
 
 // NewKeyBrowser creates a new key browser panel
@@ -56,6 +60,7 @@ func NewKeyBrowser(window fyne.Window) *KeyBrowser {
 		treeView:      false,
 		delimiter:     ":",
 		treeNodes:     make(map[string]*TreeNode),
+		currentScope:  "",
 	}
 	kb.ExtendBaseWidget(kb)
 	kb.buildUI()
@@ -66,9 +71,23 @@ func (kb *KeyBrowser) buildUI() {
 	// Count label (must be created first as filterKeys uses it)
 	kb.countLabel = widget.NewLabel("0 keys")
 
+	// Scope indicator and controls
+	kb.scopeLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+
+	kb.clearScopeBtn = widget.NewButtonWithIcon("Clear", theme.CancelIcon(), func() {
+		kb.clearScope()
+	})
+	kb.clearScopeBtn.Importance = widget.LowImportance
+	kb.clearScopeBtn.Hide()
+
+	kb.setScopeBtn = widget.NewButtonWithIcon("Scope", theme.SearchIcon(), func() {
+		kb.setScopeFromSelection()
+	})
+	kb.setScopeBtn.Importance = widget.LowImportance
+
 	// Search entry
 	kb.searchEntry = widget.NewEntry()
-	kb.searchEntry.SetPlaceHolder("Search keys (pattern: *)...")
+	kb.searchEntry.SetPlaceHolder("Search keys...")
 	kb.searchEntry.OnChanged = func(s string) {
 		kb.filterKeys()
 	}
@@ -86,7 +105,7 @@ func (kb *KeyBrowser) buildUI() {
 	kb.keyTree = kb.buildTreeView()
 
 	// Content area that holds either list or tree
-	kb.contentArea = container.NewMax(kb.keyList)
+	kb.contentArea = container.NewStack(kb.keyList)
 
 	// View toggle button
 	kb.viewToggle = widget.NewButtonWithIcon("", theme.ListIcon(), func() {
@@ -95,11 +114,12 @@ func (kb *KeyBrowser) buildUI() {
 	kb.viewToggle.Importance = widget.LowImportance
 
 	// Buttons
-	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
+	refreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 		kb.LoadKeys()
 	})
+	refreshBtn.Importance = widget.LowImportance
 
-	newKeyBtn := widget.NewButtonWithIcon("New Key", theme.ContentAddIcon(), func() {
+	newKeyBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
 		if kb.client == nil {
 			return
 		}
@@ -107,26 +127,41 @@ func (kb *KeyBrowser) buildUI() {
 			kb.createKey(key, keyType)
 		})
 	})
+	newKeyBtn.Importance = widget.LowImportance
 
-	deleteBtn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
+	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
 		kb.deleteSelectedKey()
 	})
+	deleteBtn.Importance = widget.LowImportance
 
 	// Search bar with filter
 	searchBar := container.NewBorder(nil, nil, nil,
-		container.NewHBox(kb.typeFilter),
+		kb.typeFilter,
 		kb.searchEntry,
 	)
 
+	// Scope bar
+	scopeBar := container.NewHBox(kb.scopeLabel, kb.clearScopeBtn)
+
 	// Button bar with view toggle
-	buttonBar := container.NewHBox(kb.viewToggle, refreshBtn, newKeyBtn, deleteBtn)
+	buttonBar := container.NewHBox(
+		kb.viewToggle,
+		widget.NewSeparator(),
+		refreshBtn,
+		newKeyBtn,
+		deleteBtn,
+		widget.NewSeparator(),
+		kb.setScopeBtn,
+	)
 
 	// Header
 	header := container.NewVBox(
-		container.NewHBox(
+		container.NewBorder(nil, nil,
 			widget.NewLabelWithStyle("Keys", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			kb.countLabel,
+			nil,
 		),
+		scopeBar,
 		searchBar,
 		buttonBar,
 	)
@@ -198,11 +233,11 @@ func (kb *KeyBrowser) buildTreeView() *widget.Tree {
 		},
 		// CreateNode - creates a new node widget
 		func(branch bool) fyne.CanvasObject {
-			return container.NewHBox(
-				widget.NewIcon(theme.FolderIcon()),
-				widget.NewLabel("Node"),
-				widget.NewLabel(""),
-			)
+			label := widget.NewLabel("Node")
+			icon := widget.NewIcon(theme.FolderIcon())
+			typeLabel := widget.NewLabel("")
+			row := container.NewHBox(icon, label, typeLabel)
+			return row
 		},
 		// UpdateNode - updates the node widget
 		func(uid widget.TreeNodeID, branch bool, o fyne.CanvasObject) {
@@ -236,8 +271,9 @@ func (kb *KeyBrowser) buildTreeView() *widget.Tree {
 			return
 		}
 
+		kb.selectedKey = uid
+
 		if node.IsKey {
-			kb.selectedKey = node.FullKey
 			// Find the key in filteredKeys
 			for _, key := range kb.filteredKeys {
 				if key.Key == node.FullKey {
@@ -251,6 +287,56 @@ func (kb *KeyBrowser) buildTreeView() *widget.Tree {
 	}
 
 	return tree
+}
+
+func (kb *KeyBrowser) setScopeFromSelection() {
+	var scopePath string
+
+	if kb.treeView {
+		// In tree view, use the selected node
+		if kb.selectedKey == "" {
+			return
+		}
+		if node, ok := kb.treeNodes[kb.selectedKey]; ok {
+			if node.IsKey {
+				// It's a key - get the parent path
+				lastDelim := strings.LastIndex(kb.selectedKey, kb.delimiter)
+				if lastDelim > 0 {
+					scopePath = kb.selectedKey[:lastDelim]
+				}
+			} else {
+				// It's a folder - use it directly
+				scopePath = kb.selectedKey
+			}
+		}
+	} else {
+		// In list view, extract prefix from selected key
+		if kb.selectedIndex >= 0 && kb.selectedIndex < len(kb.filteredKeys) {
+			key := kb.filteredKeys[kb.selectedIndex].Key
+			lastDelim := strings.LastIndex(key, kb.delimiter)
+			if lastDelim > 0 {
+				scopePath = key[:lastDelim]
+			}
+		}
+	}
+
+	if scopePath != "" {
+		kb.setScope(scopePath)
+	}
+}
+
+func (kb *KeyBrowser) setScope(scope string) {
+	kb.currentScope = scope
+	kb.scopeLabel.SetText("Scope: " + scope)
+	kb.clearScopeBtn.Show()
+	kb.filterKeys()
+}
+
+func (kb *KeyBrowser) clearScope() {
+	kb.currentScope = ""
+	kb.scopeLabel.SetText("")
+	kb.clearScopeBtn.Hide()
+	kb.filterKeys()
 }
 
 func (kb *KeyBrowser) getChildIDs(node *TreeNode) []widget.TreeNodeID {
@@ -365,6 +451,10 @@ func (kb *KeyBrowser) deleteSelectedKey() {
 
 	if kb.treeView {
 		keyToDelete = kb.selectedKey
+		// Check if it's actually a key (not a folder)
+		if node, ok := kb.treeNodes[keyToDelete]; ok && !node.IsKey {
+			return // Can't delete a folder
+		}
 	} else {
 		if kb.selectedIndex < 0 || kb.selectedIndex >= len(kb.filteredKeys) {
 			return
@@ -433,6 +523,13 @@ func (kb *KeyBrowser) filterKeys() {
 
 	kb.filteredKeys = nil
 	for _, key := range kb.keys {
+		// Scope filter - key must start with scope prefix
+		if kb.currentScope != "" {
+			if !strings.HasPrefix(key.Key, kb.currentScope+kb.delimiter) && key.Key != kb.currentScope {
+				continue
+			}
+		}
+
 		// Type filter
 		if typeFilter != "" && typeFilter != "All Types" && key.Type != typeFilter {
 			continue
@@ -515,6 +612,7 @@ func (kb *KeyBrowser) Clear() {
 	kb.keys = nil
 	kb.filteredKeys = nil
 	kb.selectedKey = ""
+	kb.clearScope()
 	if kb.countLabel != nil {
 		kb.countLabel.SetText("0 keys")
 	}
