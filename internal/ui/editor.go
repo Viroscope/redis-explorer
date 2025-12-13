@@ -2,15 +2,76 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"redis-explorer/internal/models"
 	"redis-explorer/internal/redis"
 )
+
+// EditableLabel is a label that can be double-clicked to edit
+type EditableLabel struct {
+	widget.BaseWidget
+	text      string
+	label     *widget.Label
+	onEdit    func(newValue string)
+	lastClick time.Time
+	window    fyne.Window
+	fieldName string
+}
+
+// NewEditableLabel creates a new editable label
+func NewEditableLabel(text string, fieldName string, window fyne.Window, onEdit func(newValue string)) *EditableLabel {
+	el := &EditableLabel{
+		text:      text,
+		fieldName: fieldName,
+		window:    window,
+		onEdit:    onEdit,
+	}
+	el.ExtendBaseWidget(el)
+	el.label = widget.NewLabel(text)
+	return el
+}
+
+func (el *EditableLabel) Tapped(e *fyne.PointEvent) {
+	now := time.Now()
+	if now.Sub(el.lastClick) < 400*time.Millisecond {
+		// Double click - show edit dialog
+		el.showEditDialog()
+	}
+	el.lastClick = now
+}
+
+func (el *EditableLabel) showEditDialog() {
+	entry := widget.NewEntry()
+	entry.SetText(el.text)
+	entry.MultiLine = false
+
+	dialog.ShowForm(fmt.Sprintf("Edit %s", el.fieldName), "Save", "Cancel",
+		[]*widget.FormItem{
+			{Text: el.fieldName, Widget: entry},
+		},
+		func(save bool) {
+			if save && el.onEdit != nil {
+				el.onEdit(entry.Text)
+			}
+		}, el.window)
+}
+
+func (el *EditableLabel) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(el.label)
+}
+
+func (el *EditableLabel) SetText(text string) {
+	el.text = text
+	el.label.SetText(text)
+}
 
 // ValueEditor represents the value editor panel
 type ValueEditor struct {
@@ -158,7 +219,9 @@ func (ve *ValueEditor) buildStringEditor(key models.RedisKey) fyne.CanvasObject 
 		}
 	})
 
-	return container.NewBorder(nil, saveBtn, nil, nil, entry)
+	hint := widget.NewLabelWithStyle("Edit the value above and click Save", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	return container.NewBorder(nil, container.NewVBox(hint, saveBtn), nil, nil, entry)
 }
 
 func (ve *ValueEditor) buildListEditor(key models.RedisKey) fyne.CanvasObject {
@@ -167,20 +230,43 @@ func (ve *ValueEditor) buildListEditor(key models.RedisKey) fyne.CanvasObject {
 		return widget.NewLabel("Error: " + err.Error())
 	}
 
-	list := widget.NewList(
-		func() int { return len(items) },
+	// Build table-like grid with aligned columns
+	table := widget.NewTable(
+		func() (int, int) { return len(items), 2 },
 		func() fyne.CanvasObject {
 			return container.NewHBox(
-				widget.NewLabel("0"),
-				widget.NewLabel("value"),
+				widget.NewLabelWithStyle("", fyne.TextAlignTrailing, fyne.TextStyle{}),
 			)
 		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
+		func(id widget.TableCellID, o fyne.CanvasObject) {
 			box := o.(*fyne.Container)
-			box.Objects[0].(*widget.Label).SetText(fmt.Sprintf("[%d]", i))
-			box.Objects[1].(*widget.Label).SetText(items[i])
+			label := box.Objects[0].(*widget.Label)
+			if id.Col == 0 {
+				label.SetText(fmt.Sprintf("[%d]", id.Row))
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				label.SetText(items[id.Row])
+				label.TextStyle = fyne.TextStyle{}
+			}
 		},
 	)
+	table.SetColumnWidth(0, 60)
+	table.SetColumnWidth(1, 400)
+
+	// Double-click to edit
+	table.OnSelected = func(id widget.TableCellID) {
+		if id.Col == 1 && id.Row < len(items) {
+			ve.showEditValueDialog("Value", items[id.Row], func(newVal string) {
+				err := ve.client.ListSet(key.Key, int64(id.Row), newVal)
+				if err != nil {
+					ShowErrorDialog(ve.window, "Error", err)
+					return
+				}
+				ve.LoadKey(key)
+			})
+		}
+		table.UnselectAll()
+	}
 
 	addEntry := widget.NewEntry()
 	addEntry.SetPlaceHolder("New value")
@@ -211,12 +297,17 @@ func (ve *ValueEditor) buildListEditor(key models.RedisKey) fyne.CanvasObject {
 		ve.LoadKey(key)
 	})
 
-	addBar := container.NewBorder(nil, nil, nil,
-		container.NewHBox(addLeftBtn, addRightBtn),
-		addEntry,
+	hint := widget.NewLabelWithStyle("Click a value to edit", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	addBar := container.NewVBox(
+		hint,
+		container.NewBorder(nil, nil, nil,
+			container.NewHBox(addLeftBtn, addRightBtn),
+			addEntry,
+		),
 	)
 
-	return container.NewBorder(nil, addBar, nil, nil, list)
+	return container.NewBorder(nil, addBar, nil, nil, table)
 }
 
 func (ve *ValueEditor) buildSetEditor(key models.RedisKey) fyne.CanvasObject {
@@ -225,21 +316,25 @@ func (ve *ValueEditor) buildSetEditor(key models.RedisKey) fyne.CanvasObject {
 		return widget.NewLabel("Error: " + err.Error())
 	}
 
+	sort.Strings(members)
 	var selectedMember string
+	var selectedRow int = -1
 
-	list := widget.NewList(
-		func() int { return len(members) },
+	table := widget.NewTable(
+		func() (int, int) { return len(members), 1 },
 		func() fyne.CanvasObject {
-			return widget.NewLabel("member")
+			return widget.NewLabel("")
 		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(members[i])
+		func(id widget.TableCellID, o fyne.CanvasObject) {
+			o.(*widget.Label).SetText(members[id.Row])
 		},
 	)
+	table.SetColumnWidth(0, 450)
 
-	list.OnSelected = func(id widget.ListItemID) {
-		if id >= 0 && id < len(members) {
-			selectedMember = members[id]
+	table.OnSelected = func(id widget.TableCellID) {
+		if id.Row < len(members) {
+			selectedMember = members[id.Row]
+			selectedRow = id.Row
 		}
 	}
 
@@ -259,8 +354,8 @@ func (ve *ValueEditor) buildSetEditor(key models.RedisKey) fyne.CanvasObject {
 		ve.LoadKey(key)
 	})
 
-	removeBtn := widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), func() {
-		if selectedMember == "" {
+	removeBtn := widget.NewButtonWithIcon("Remove Selected", theme.ContentRemoveIcon(), func() {
+		if selectedMember == "" || selectedRow < 0 {
 			return
 		}
 		err := ve.client.SetRemove(key.Key, selectedMember)
@@ -268,15 +363,17 @@ func (ve *ValueEditor) buildSetEditor(key models.RedisKey) fyne.CanvasObject {
 			ShowErrorDialog(ve.window, "Error", err)
 			return
 		}
+		selectedMember = ""
+		selectedRow = -1
 		ve.LoadKey(key)
 	})
 
-	addBar := container.NewBorder(nil, nil, nil,
-		container.NewHBox(addBtn, removeBtn),
-		addEntry,
+	addBar := container.NewVBox(
+		container.NewBorder(nil, nil, nil, addBtn, addEntry),
+		removeBtn,
 	)
 
-	return container.NewBorder(nil, addBar, nil, nil, list)
+	return container.NewBorder(nil, addBar, nil, nil, table)
 }
 
 func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
@@ -285,7 +382,7 @@ func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
 		return widget.NewLabel("Error: " + err.Error())
 	}
 
-	// Convert map to slice for list
+	// Convert map to sorted slice
 	type fieldValue struct {
 		field string
 		value string
@@ -294,28 +391,48 @@ func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
 	for k, v := range hash {
 		items = append(items, fieldValue{field: k, value: v})
 	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].field < items[j].field
+	})
 
 	var selectedField string
+	var selectedRow int = -1
 
-	list := widget.NewList(
-		func() int { return len(items) },
+	table := widget.NewTable(
+		func() (int, int) { return len(items), 2 },
 		func() fyne.CanvasObject {
-			return container.NewHBox(
-				widget.NewLabel("field"),
-				widget.NewLabel(":"),
-				widget.NewLabel("value"),
-			)
+			return widget.NewLabel("")
 		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			box := o.(*fyne.Container)
-			box.Objects[0].(*widget.Label).SetText(items[i].field)
-			box.Objects[2].(*widget.Label).SetText(items[i].value)
+		func(id widget.TableCellID, o fyne.CanvasObject) {
+			label := o.(*widget.Label)
+			if id.Col == 0 {
+				label.SetText(items[id.Row].field)
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				label.SetText(items[id.Row].value)
+				label.TextStyle = fyne.TextStyle{}
+			}
 		},
 	)
+	table.SetColumnWidth(0, 150)
+	table.SetColumnWidth(1, 300)
 
-	list.OnSelected = func(id widget.ListItemID) {
-		if id >= 0 && id < len(items) {
-			selectedField = items[id].field
+	table.OnSelected = func(id widget.TableCellID) {
+		if id.Row < len(items) {
+			selectedField = items[id.Row].field
+			selectedRow = id.Row
+			if id.Col == 1 {
+				// Click on value column - edit
+				ve.showEditValueDialog("Value", items[id.Row].value, func(newVal string) {
+					err := ve.client.HashSet(key.Key, selectedField, newVal)
+					if err != nil {
+						ShowErrorDialog(ve.window, "Error", err)
+						return
+					}
+					ve.LoadKey(key)
+				})
+				table.UnselectAll()
+			}
 		}
 	}
 
@@ -325,7 +442,7 @@ func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
 	valueEntry := widget.NewEntry()
 	valueEntry.SetPlaceHolder("Value")
 
-	setBtn := widget.NewButtonWithIcon("Set", theme.DocumentSaveIcon(), func() {
+	setBtn := widget.NewButtonWithIcon("Add/Update", theme.DocumentSaveIcon(), func() {
 		if fieldEntry.Text == "" {
 			return
 		}
@@ -339,8 +456,8 @@ func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
 		ve.LoadKey(key)
 	})
 
-	removeBtn := widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), func() {
-		if selectedField == "" {
+	removeBtn := widget.NewButtonWithIcon("Remove Selected", theme.ContentRemoveIcon(), func() {
+		if selectedField == "" || selectedRow < 0 {
 			return
 		}
 		err := ve.client.HashDelete(key.Key, selectedField)
@@ -348,15 +465,20 @@ func (ve *ValueEditor) buildHashEditor(key models.RedisKey) fyne.CanvasObject {
 			ShowErrorDialog(ve.window, "Error", err)
 			return
 		}
+		selectedField = ""
+		selectedRow = -1
 		ve.LoadKey(key)
 	})
 
+	hint := widget.NewLabelWithStyle("Click a value to edit inline", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
 	addBar := container.NewVBox(
+		hint,
 		container.NewGridWithColumns(2, fieldEntry, valueEntry),
 		container.NewHBox(setBtn, removeBtn),
 	)
 
-	return container.NewBorder(nil, addBar, nil, nil, list)
+	return container.NewBorder(nil, addBar, nil, nil, table)
 }
 
 func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
@@ -366,26 +488,64 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 	}
 
 	var selectedMember string
+	var selectedRow int = -1
 
-	list := widget.NewList(
-		func() int { return len(members) },
+	table := widget.NewTable(
+		func() (int, int) { return len(members), 2 },
 		func() fyne.CanvasObject {
-			return container.NewHBox(
-				widget.NewLabel("score"),
-				widget.NewLabel(":"),
-				widget.NewLabel("member"),
-			)
+			return widget.NewLabel("")
 		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			box := o.(*fyne.Container)
-			box.Objects[0].(*widget.Label).SetText(fmt.Sprintf("%.2f", members[i].Score))
-			box.Objects[2].(*widget.Label).SetText(members[i].Member)
+		func(id widget.TableCellID, o fyne.CanvasObject) {
+			label := o.(*widget.Label)
+			if id.Col == 0 {
+				label.SetText(fmt.Sprintf("%.4f", members[id.Row].Score))
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				label.SetText(members[id.Row].Member)
+				label.TextStyle = fyne.TextStyle{}
+			}
 		},
 	)
+	table.SetColumnWidth(0, 100)
+	table.SetColumnWidth(1, 350)
 
-	list.OnSelected = func(id widget.ListItemID) {
-		if id >= 0 && id < len(members) {
-			selectedMember = members[id].Member
+	table.OnSelected = func(id widget.TableCellID) {
+		if id.Row < len(members) {
+			selectedMember = members[id.Row].Member
+			selectedRow = id.Row
+			if id.Col == 0 {
+				// Click on score - edit score
+				ve.showEditValueDialog("Score", fmt.Sprintf("%.4f", members[id.Row].Score), func(newVal string) {
+					score, err := strconv.ParseFloat(newVal, 64)
+					if err != nil {
+						ShowErrorDialog(ve.window, "Invalid Score", err)
+						return
+					}
+					// Remove and re-add with new score
+					ve.client.SortedSetRemove(key.Key, selectedMember)
+					err = ve.client.SortedSetAdd(key.Key, score, selectedMember)
+					if err != nil {
+						ShowErrorDialog(ve.window, "Error", err)
+						return
+					}
+					ve.LoadKey(key)
+				})
+				table.UnselectAll()
+			} else if id.Col == 1 {
+				// Click on member - edit member
+				oldScore := members[id.Row].Score
+				ve.showEditValueDialog("Member", selectedMember, func(newVal string) {
+					// Remove old and add new
+					ve.client.SortedSetRemove(key.Key, selectedMember)
+					err := ve.client.SortedSetAdd(key.Key, oldScore, newVal)
+					if err != nil {
+						ShowErrorDialog(ve.window, "Error", err)
+						return
+					}
+					ve.LoadKey(key)
+				})
+				table.UnselectAll()
+			}
 		}
 	}
 
@@ -413,8 +573,8 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 		ve.LoadKey(key)
 	})
 
-	removeBtn := widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), func() {
-		if selectedMember == "" {
+	removeBtn := widget.NewButtonWithIcon("Remove Selected", theme.ContentRemoveIcon(), func() {
+		if selectedMember == "" || selectedRow < 0 {
 			return
 		}
 		err := ve.client.SortedSetRemove(key.Key, selectedMember)
@@ -422,15 +582,38 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 			ShowErrorDialog(ve.window, "Error", err)
 			return
 		}
+		selectedMember = ""
+		selectedRow = -1
 		ve.LoadKey(key)
 	})
 
+	hint := widget.NewLabelWithStyle("Click score or member to edit", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
 	addBar := container.NewVBox(
+		hint,
 		container.NewGridWithColumns(2, scoreEntry, memberEntry),
 		container.NewHBox(addBtn, removeBtn),
 	)
 
-	return container.NewBorder(nil, addBar, nil, nil, list)
+	return container.NewBorder(nil, addBar, nil, nil, table)
+}
+
+func (ve *ValueEditor) showEditValueDialog(fieldName string, currentValue string, onSave func(string)) {
+	entry := widget.NewMultiLineEntry()
+	entry.SetText(currentValue)
+	entry.Wrapping = fyne.TextWrapWord
+
+	d := dialog.NewForm(fmt.Sprintf("Edit %s", fieldName), "Save", "Cancel",
+		[]*widget.FormItem{
+			{Text: fieldName, Widget: entry},
+		},
+		func(save bool) {
+			if save {
+				onSave(entry.Text)
+			}
+		}, ve.window)
+	d.Resize(fyne.NewSize(400, 200))
+	d.Show()
 }
 
 // Clear clears the editor
