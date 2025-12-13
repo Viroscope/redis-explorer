@@ -518,13 +518,15 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 				ve.showEditValueDialog("Score", fmt.Sprintf("%.4f", members[id.Row].Score), func(newVal string) {
 					score, err := strconv.ParseFloat(newVal, 64)
 					if err != nil {
-						ShowErrorDialog(ve.window, "Invalid Score", err)
+						ShowErrorDialog(ve.window, "Invalid Score", fmt.Errorf("score must be a valid number: %w", err))
 						return
 					}
 					// Remove and re-add with new score
-					ve.client.SortedSetRemove(key.Key, selectedMember)
-					err = ve.client.SortedSetAdd(key.Key, score, selectedMember)
-					if err != nil {
+					if err := ve.client.SortedSetRemove(key.Key, selectedMember); err != nil {
+						ShowErrorDialog(ve.window, "Error", err)
+						return
+					}
+					if err := ve.client.SortedSetAdd(key.Key, score, selectedMember); err != nil {
 						ShowErrorDialog(ve.window, "Error", err)
 						return
 					}
@@ -536,9 +538,11 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 				oldScore := members[id.Row].Score
 				ve.showEditValueDialog("Member", selectedMember, func(newVal string) {
 					// Remove old and add new
-					ve.client.SortedSetRemove(key.Key, selectedMember)
-					err := ve.client.SortedSetAdd(key.Key, oldScore, newVal)
-					if err != nil {
+					if err := ve.client.SortedSetRemove(key.Key, selectedMember); err != nil {
+						ShowErrorDialog(ve.window, "Error", err)
+						return
+					}
+					if err := ve.client.SortedSetAdd(key.Key, oldScore, newVal); err != nil {
 						ShowErrorDialog(ve.window, "Error", err)
 						return
 					}
@@ -559,11 +563,16 @@ func (ve *ValueEditor) buildZSetEditor(key models.RedisKey) fyne.CanvasObject {
 		if memberEntry.Text == "" {
 			return
 		}
-		score, err := strconv.ParseFloat(scoreEntry.Text, 64)
-		if err != nil {
-			score = 0
+		score := 0.0
+		if scoreEntry.Text != "" {
+			var err error
+			score, err = strconv.ParseFloat(scoreEntry.Text, 64)
+			if err != nil {
+				ShowErrorDialog(ve.window, "Invalid Score", fmt.Errorf("score must be a valid number"))
+				return
+			}
 		}
-		err = ve.client.SortedSetAdd(key.Key, score, memberEntry.Text)
+		err := ve.client.SortedSetAdd(key.Key, score, memberEntry.Text)
 		if err != nil {
 			ShowErrorDialog(ve.window, "Error", err)
 			return

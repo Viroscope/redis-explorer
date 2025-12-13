@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -20,17 +21,19 @@ type ServerInfo struct {
 	onDBChanged func(db int)
 
 	// Info labels
-	versionLabel   *widget.Label
-	modeLabel      *widget.Label
-	osLabel        *widget.Label
-	uptimeLabel    *widget.Label
-	clientsLabel   *widget.Label
-	memoryLabel    *widget.Label
+	versionLabel    *widget.Label
+	modeLabel       *widget.Label
+	osLabel         *widget.Label
+	uptimeLabel     *widget.Label
+	clientsLabel    *widget.Label
+	memoryLabel     *widget.Label
 	memoryPeakLabel *widget.Label
-	totalKeysLabel *widget.Label
-	expiredLabel   *widget.Label
-	hitsLabel      *widget.Label
-	missesLabel    *widget.Label
+	totalKeysLabel  *widget.Label
+	expiredLabel    *widget.Label
+	hitsLabel       *widget.Label
+	missesLabel     *widget.Label
+	hitRateLabel    *widget.Label
+	lastRefreshLabel *widget.Label
 }
 
 // NewServerInfo creates a new server info panel
@@ -70,6 +73,8 @@ func (si *ServerInfo) buildUI() {
 	si.expiredLabel = widget.NewLabel("-")
 	si.hitsLabel = widget.NewLabel("-")
 	si.missesLabel = widget.NewLabel("-")
+	si.hitRateLabel = widget.NewLabel("-")
+	si.lastRefreshLabel = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{Italic: true})
 
 	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
 		si.Refresh()
@@ -111,6 +116,7 @@ func (si *ServerInfo) buildUI() {
 			widget.NewLabel("Expired:"), si.expiredLabel,
 			widget.NewLabel("Hits:"), si.hitsLabel,
 			widget.NewLabel("Misses:"), si.missesLabel,
+			widget.NewLabel("Hit Rate:"), si.hitRateLabel,
 		),
 	)
 
@@ -120,9 +126,9 @@ func (si *ServerInfo) buildUI() {
 		si.dbSelector,
 	)
 
-	header := container.NewHBox(
+	header := container.NewBorder(nil, nil,
 		widget.NewLabelWithStyle("Server Info", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		refreshBtn,
+		container.NewHBox(si.lastRefreshLabel, refreshBtn),
 	)
 
 	content := container.NewVBox(
@@ -150,6 +156,16 @@ func (si *ServerInfo) CreateRenderer() fyne.WidgetRenderer {
 // SetClient sets the Redis client
 func (si *ServerInfo) SetClient(client *redis.Client) {
 	si.client = client
+	if client != nil {
+		// Update database selector with actual count from server
+		dbCount := client.GetDatabaseCount()
+		dbOptions := make([]string, dbCount)
+		for i := 0; i < dbCount; i++ {
+			dbOptions[i] = fmt.Sprintf("DB %d", i)
+		}
+		si.dbSelector.Options = dbOptions
+		si.dbSelector.Refresh()
+	}
 }
 
 // SetOnDBChanged sets the callback for database change
@@ -167,6 +183,7 @@ func (si *ServerInfo) Refresh() {
 	info, err := si.client.GetServerInfo()
 	if err != nil {
 		si.clearInfo()
+		si.lastRefreshLabel.SetText("Error: " + err.Error())
 		return
 	}
 
@@ -181,6 +198,18 @@ func (si *ServerInfo) Refresh() {
 	si.expiredLabel.SetText(fmt.Sprintf("%d", info.ExpiredKeys))
 	si.hitsLabel.SetText(fmt.Sprintf("%d", info.KeyspaceHits))
 	si.missesLabel.SetText(fmt.Sprintf("%d", info.KeyspaceMisses))
+
+	// Calculate hit rate
+	totalOps := info.KeyspaceHits + info.KeyspaceMisses
+	if totalOps > 0 {
+		hitRate := float64(info.KeyspaceHits) / float64(totalOps) * 100
+		si.hitRateLabel.SetText(fmt.Sprintf("%.2f%%", hitRate))
+	} else {
+		si.hitRateLabel.SetText("N/A")
+	}
+
+	// Update refresh timestamp
+	si.lastRefreshLabel.SetText("Updated: " + time.Now().Format("15:04:05"))
 }
 
 func (si *ServerInfo) clearInfo() {
@@ -195,6 +224,8 @@ func (si *ServerInfo) clearInfo() {
 	si.expiredLabel.SetText("-")
 	si.hitsLabel.SetText("-")
 	si.missesLabel.SetText("-")
+	si.hitRateLabel.SetText("-")
+	si.lastRefreshLabel.SetText("-")
 }
 
 func (si *ServerInfo) formatUptime(seconds int64) string {

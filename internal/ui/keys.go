@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -50,6 +51,7 @@ type KeyBrowser struct {
 	treeNodes     map[string]*TreeNode
 	delimiter     string
 	currentScope  string
+	debounceTimer *time.Timer
 }
 
 // NewKeyBrowser creates a new key browser panel
@@ -85,11 +87,17 @@ func (kb *KeyBrowser) buildUI() {
 	})
 	kb.setScopeBtn.Importance = widget.LowImportance
 
-	// Search entry
+	// Search entry with debouncing
 	kb.searchEntry = widget.NewEntry()
 	kb.searchEntry.SetPlaceHolder("Search keys...")
 	kb.searchEntry.OnChanged = func(s string) {
-		kb.filterKeys()
+		// Debounce search to avoid excessive filtering on each keystroke
+		if kb.debounceTimer != nil {
+			kb.debounceTimer.Stop()
+		}
+		kb.debounceTimer = time.AfterFunc(300*time.Millisecond, func() {
+			kb.filterKeys()
+		})
 	}
 
 	// Type filter

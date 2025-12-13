@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ func (c *Client) Connect() error {
 	if c.connection.UseTLS {
 		opts.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
+			ServerName: c.connection.Host, // Required for SNI verification
 		}
 	}
 
@@ -48,7 +50,10 @@ func (c *Client) Connect() error {
 	defer cancel()
 
 	_, err := c.rdb.Ping(ctx).Result()
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to connect to Redis at %s:%d: %w", c.connection.Host, c.connection.Port, err)
+	}
+	return nil
 }
 
 // Disconnect closes the Redis connection
@@ -93,15 +98,30 @@ func (c *Client) GetAllKeys(pattern string, maxKeys int) ([]models.RedisKey, err
 	var keys []models.RedisKey
 	var cursor uint64
 
+	// Optimize scan count based on maxKeys
+	scanCount := int64(100)
+	if maxKeys > 0 && maxKeys < 100 {
+		scanCount = int64(maxKeys)
+	}
+
 	for {
-		result, nextCursor, err := c.rdb.Scan(c.ctx, cursor, pattern, 100).Result()
+		result, nextCursor, err := c.rdb.Scan(c.ctx, cursor, pattern, scanCount).Result()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan keys: %w", err)
 		}
 
 		for _, key := range result {
-			keyType, _ := c.rdb.Type(c.ctx, key).Result()
-			ttl, _ := c.rdb.TTL(c.ctx, key).Result()
+			keyType, err := c.rdb.Type(c.ctx, key).Result()
+			if err != nil {
+				log.Printf("warning: failed to get type for key %s: %v", key, err)
+				keyType = "unknown"
+			}
+
+			ttl, err := c.rdb.TTL(c.ctx, key).Result()
+			if err != nil {
+				log.Printf("warning: failed to get TTL for key %s: %v", key, err)
+				ttl = -2 * time.Second
+			}
 
 			keys = append(keys, models.RedisKey{
 				Key:  key,
@@ -317,6 +337,15 @@ func (c *Client) GetServerInfo() (*models.ServerInfo, error) {
 
 // GetDatabaseCount returns the number of databases
 func (c *Client) GetDatabaseCount() int {
+	// Try to get from server config
+	result, err := c.rdb.ConfigGet(c.ctx, "databases").Result()
+	if err == nil && len(result) >= 2 {
+		if dbStr, ok := result["databases"]; ok {
+			if count, err := strconv.Atoi(dbStr); err == nil && count > 0 {
+				return count
+			}
+		}
+	}
 	// Default Redis has 16 databases (0-15)
 	return 16
 }

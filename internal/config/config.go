@@ -119,7 +119,11 @@ func Get() *Config {
 func Save() error {
 	mu.Lock()
 	defer mu.Unlock()
+	return saveWithoutLock()
+}
 
+// saveWithoutLock saves config (caller must hold lock)
+func saveWithoutLock() error {
 	if configPath == "" {
 		path, err := getConfigPath()
 		if err != nil {
@@ -132,49 +136,49 @@ func Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0644)
+	return os.WriteFile(configPath, data, 0600)
 }
 
 // SetTheme updates the theme setting
 func SetTheme(theme models.ThemeName) error {
 	mu.Lock()
+	defer mu.Unlock()
 	instance.Theme = theme
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }
 
 // AddConnection adds a new server connection
 func AddConnection(conn models.ServerConnection) error {
 	mu.Lock()
+	defer mu.Unlock()
 	instance.Connections = append(instance.Connections, conn)
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }
 
 // UpdateConnection updates an existing connection
 func UpdateConnection(conn models.ServerConnection) error {
 	mu.Lock()
+	defer mu.Unlock()
 	for i, c := range instance.Connections {
 		if c.ID == conn.ID {
 			instance.Connections[i] = conn
 			break
 		}
 	}
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }
 
 // RemoveConnection removes a connection by ID
 func RemoveConnection(id string) error {
 	mu.Lock()
+	defer mu.Unlock()
 	for i, c := range instance.Connections {
 		if c.ID == id {
 			instance.Connections = append(instance.Connections[:i], instance.Connections[i+1:]...)
 			break
 		}
 	}
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }
 
 // GetConnection returns a connection by ID
@@ -183,7 +187,8 @@ func GetConnection(id string) *models.ServerConnection {
 	defer mu.RUnlock()
 	for _, c := range instance.Connections {
 		if c.ID == id {
-			return &c
+			conn := c // Create copy to avoid returning pointer to loop variable
+			return &conn
 		}
 	}
 	return nil
@@ -192,16 +197,16 @@ func GetConnection(id string) *models.ServerConnection {
 // SetLastConnection sets the last used connection ID
 func SetLastConnection(id string) error {
 	mu.Lock()
+	defer mu.Unlock()
 	instance.LastConnectionID = id
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }
 
 // SetWindowSize updates the window dimensions
 func SetWindowSize(width, height float32) error {
 	mu.Lock()
+	defer mu.Unlock()
 	instance.WindowWidth = width
 	instance.WindowHeight = height
-	mu.Unlock()
-	return Save()
+	return saveWithoutLock()
 }

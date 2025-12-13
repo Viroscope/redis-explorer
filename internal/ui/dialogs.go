@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -75,20 +77,31 @@ func ShowConnectionDialog(window fyne.Window, conn *models.ServerConnection, onS
 			return
 		}
 
-		port, err := strconv.Atoi(portEntry.Text)
-		if err != nil {
-			port = 6379
+		// Validate host
+		host := strings.TrimSpace(hostEntry.Text)
+		if host == "" {
+			dialog.ShowError(fmt.Errorf("host is required"), window)
+			return
 		}
 
+		// Validate port
+		port, err := strconv.Atoi(portEntry.Text)
+		if err != nil || port < 1 || port > 65535 {
+			dialog.ShowError(fmt.Errorf("port must be between 1 and 65535"), window)
+			return
+		}
+
+		// Validate database
 		db, err := strconv.Atoi(dbEntry.Text)
-		if err != nil {
-			db = 0
+		if err != nil || db < 0 || db > 15 {
+			dialog.ShowError(fmt.Errorf("database must be between 0 and 15"), window)
+			return
 		}
 
 		newConn := models.ServerConnection{
 			ID:       conn.ID,
-			Name:     nameEntry.Text,
-			Host:     hostEntry.Text,
+			Name:     strings.TrimSpace(nameEntry.Text),
+			Host:     host,
 			Port:     port,
 			Password: passwordEntry.Text,
 			Database: db,
@@ -172,9 +185,19 @@ func ShowNewKeyDialog(window fyne.Window, onCreate func(key string, keyType stri
 	}
 
 	d := dialog.NewCustomConfirm("New Key", "Create", "Cancel", form, func(create bool) {
-		if create && keyEntry.Text != "" {
-			onCreate(keyEntry.Text, typeSelect.Selected)
+		if !create {
+			return
 		}
+		key := strings.TrimSpace(keyEntry.Text)
+		if key == "" {
+			dialog.ShowError(fmt.Errorf("key name is required"), window)
+			return
+		}
+		if typeSelect.Selected == "" {
+			dialog.ShowError(fmt.Errorf("key type is required"), window)
+			return
+		}
+		onCreate(key, typeSelect.Selected)
 	}, window)
 
 	d.Resize(fyne.NewSize(350, 150))
@@ -196,13 +219,24 @@ func ShowTTLDialog(window fyne.Window, currentTTL int64, onSet func(ttl int64)) 
 	}
 
 	d := dialog.NewCustomConfirm("Set TTL", "Set", "Cancel", form, func(set bool) {
-		if set {
-			ttl, err := strconv.ParseInt(ttlEntry.Text, 10, 64)
-			if err != nil {
-				ttl = 0
-			}
-			onSet(ttl)
+		if !set {
+			return
 		}
+		text := strings.TrimSpace(ttlEntry.Text)
+		if text == "" {
+			onSet(0) // Remove expiry
+			return
+		}
+		ttl, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("TTL must be a valid number"), window)
+			return
+		}
+		if ttl < 0 {
+			dialog.ShowError(fmt.Errorf("TTL must be non-negative"), window)
+			return
+		}
+		onSet(ttl)
 	}, window)
 
 	d.Resize(fyne.NewSize(300, 120))
@@ -221,27 +255,34 @@ func ShowSettingsDialog(window fyne.Window, onSave func()) {
 
 	form := &widget.Form{
 		Items: []*widget.FormItem{
-			{Text: "Key Scan Count", Widget: scanCountEntry, HintText: "Number of keys to scan per request"},
-			{Text: "Auto Refresh (sec)", Widget: refreshEntry, HintText: "0 to disable"},
+			{Text: "Key Scan Count", Widget: scanCountEntry, HintText: "Number of keys to scan per request (1-10000)"},
+			{Text: "Auto Refresh (sec)", Widget: refreshEntry, HintText: "0 to disable (max 3600)"},
 		},
 	}
 
 	d := dialog.NewCustomConfirm("Settings", "Save", "Cancel", form, func(save bool) {
-		if save {
-			scanCount, err := strconv.Atoi(scanCountEntry.Text)
-			if err == nil && scanCount > 0 {
-				cfg.KeyScanCount = scanCount
-			}
+		if !save {
+			return
+		}
 
-			refresh, err := strconv.Atoi(refreshEntry.Text)
-			if err == nil && refresh >= 0 {
-				cfg.AutoRefreshSecs = refresh
-			}
+		scanCount, err := strconv.Atoi(scanCountEntry.Text)
+		if err != nil || scanCount < 1 || scanCount > 10000 {
+			dialog.ShowError(fmt.Errorf("key scan count must be between 1 and 10000"), window)
+			return
+		}
 
-			config.Save()
-			if onSave != nil {
-				onSave()
-			}
+		refresh, err := strconv.Atoi(refreshEntry.Text)
+		if err != nil || refresh < 0 || refresh > 3600 {
+			dialog.ShowError(fmt.Errorf("auto refresh must be between 0 and 3600 seconds"), window)
+			return
+		}
+
+		cfg.KeyScanCount = scanCount
+		cfg.AutoRefreshSecs = refresh
+
+		config.Save()
+		if onSave != nil {
+			onSave()
 		}
 	}, window)
 
