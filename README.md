@@ -45,7 +45,32 @@ A powerful, cross-platform GUI client for Redis databases built with Go and Fyne
 
 ## Installation
 
-### Prerequisites
+### Download Pre-built Binaries
+
+Download the latest release for your platform from the [Releases](https://github.com/Viroscope/redis-explorer/releases) page.
+
+Available for:
+- **Linux** (x64, ARM64)
+- **macOS** (Intel, Apple Silicon)
+- **Windows** (x64)
+
+#### Linux/macOS
+```bash
+# Download and extract
+tar -xzf redis-explorer-*.tar.gz
+
+# Run
+./redis-explorer-*
+```
+
+#### Windows
+1. Download the `.zip` file from releases
+2. Extract the contents
+3. Run `redis-explorer-*.exe`
+
+### Build from Source
+
+#### Prerequisites
 
 - Go 1.21 or later
 - GCC (for CGO)
@@ -63,17 +88,12 @@ sudo apt-get install -y libgl1-mesa-dev xorg-dev
 sudo dnf install -y mesa-libGL-devel libXcursor-devel libXrandr-devel libXinerama-devel libXi-devel libXxf86vm-devel
 ```
 
-### Build from Source
+#### Build and Run
 
 ```bash
 git clone https://github.com/Viroscope/redis-explorer.git
 cd redis-explorer
 go build -o redis-explorer .
-```
-
-### Run
-
-```bash
 ./redis-explorer
 ```
 
