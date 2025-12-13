@@ -1,15 +1,22 @@
 package ui
 
 import (
+	"net/url"
 	"strconv"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 	"github.com/google/uuid"
 	"redis-explorer/internal/config"
 	"redis-explorer/internal/models"
+)
+
+const (
+	AppVersion = "1.0.0"
+	AppName    = "Redis Explorer"
 )
 
 // ShowConnectionDialog shows a dialog to add or edit a connection
@@ -239,5 +246,96 @@ func ShowSettingsDialog(window fyne.Window, onSave func()) {
 	}, window)
 
 	d.Resize(fyne.NewSize(400, 180))
+	d.Show()
+}
+
+// ShowAboutDialog shows a professional about dialog
+func ShowAboutDialog(window fyne.Window, icon fyne.Resource) {
+	// Logo
+	var logoImage *canvas.Image
+	if icon != nil {
+		logoImage = canvas.NewImageFromResource(icon)
+		logoImage.SetMinSize(fyne.NewSize(100, 100))
+		logoImage.FillMode = canvas.ImageFillContain
+	}
+
+	// App info
+	titleLabel := widget.NewLabelWithStyle(AppName, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	versionLabel := widget.NewLabelWithStyle("Version "+AppVersion, fyne.TextAlignCenter, fyne.TextStyle{})
+	descLabel := widget.NewLabelWithStyle(
+		"A powerful GUI client for Redis databases.\nSupports all Redis data types with intuitive editing.",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Italic: true},
+	)
+
+	// Separator
+	sep1 := widget.NewSeparator()
+
+	// Developer info
+	devHeader := widget.NewLabelWithStyle("Developer", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	devName := widget.NewLabelWithStyle("Dark Angel", fyne.TextAlignCenter, fyne.TextStyle{})
+
+	// Discord info
+	sep2 := widget.NewSeparator()
+	discordHeader := widget.NewLabelWithStyle("Community", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+
+	discordURL, _ := url.Parse("https://discord.gg/swmy25fFHY")
+	discordLink := widget.NewHyperlink("Join Arcturus on Discord", discordURL)
+	discordLink.Alignment = fyne.TextAlignCenter
+
+	discordInfo := widget.NewLabelWithStyle(
+		"Server: Arcturus\nUser ID: 490662159508832287\nServer ID: 1122592718544179251",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{},
+	)
+
+	// Tech info
+	sep3 := widget.NewSeparator()
+	techLabel := widget.NewLabelWithStyle(
+		"Built with Go & Fyne",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Italic: true},
+	)
+
+	// Layout
+	var content *fyne.Container
+	if logoImage != nil {
+		content = container.NewVBox(
+			container.NewCenter(logoImage),
+			titleLabel,
+			versionLabel,
+			descLabel,
+			sep1,
+			devHeader,
+			devName,
+			sep2,
+			discordHeader,
+			container.NewCenter(discordLink),
+			discordInfo,
+			sep3,
+			techLabel,
+		)
+	} else {
+		content = container.NewVBox(
+			titleLabel,
+			versionLabel,
+			descLabel,
+			sep1,
+			devHeader,
+			devName,
+			sep2,
+			discordHeader,
+			container.NewCenter(discordLink),
+			discordInfo,
+			sep3,
+			techLabel,
+		)
+	}
+
+	scroll := container.NewVScroll(content)
+	scroll.SetMinSize(fyne.NewSize(350, 400))
+
+	d := dialog.NewCustom("About "+AppName, "Close", scroll, window)
+	d.Resize(fyne.NewSize(400, 500))
 	d.Show()
 }

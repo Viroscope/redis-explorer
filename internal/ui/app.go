@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -21,6 +24,7 @@ type App struct {
 	client     *redis.Client
 	connected  bool
 	currentDB  int
+	appIcon    fyne.Resource
 }
 
 // NewApp creates a new application instance
@@ -40,9 +44,15 @@ func (a *App) Run() {
 	a.fyneApp = app.NewWithID("com.redis-explorer")
 	a.fyneApp.Settings().SetTheme(GetTheme(cfg.Theme))
 
+	// Load app icon
+	a.loadIcon()
+
 	// Create main window
-	a.window = a.fyneApp.NewWindow("Redis Explorer")
+	a.window = a.fyneApp.NewWindow(AppName)
 	a.window.Resize(fyne.NewSize(cfg.WindowWidth, cfg.WindowHeight))
+	if a.appIcon != nil {
+		a.window.SetIcon(a.appIcon)
+	}
 
 	// Create UI components
 	a.createUI()
@@ -159,8 +169,7 @@ func (a *App) createMenu() *fyne.MainMenu {
 	// Help menu
 	helpMenu := fyne.NewMenu("Help",
 		fyne.NewMenuItem("About", func() {
-			ShowInfoDialog(a.window, "About Redis Explorer",
-				"Redis Explorer v1.0.0\n\nA GUI Redis client built with Go and Fyne.\n\nSupports strings, lists, sets, hashes, and sorted sets.")
+			ShowAboutDialog(a.window, a.appIcon)
 		}),
 	)
 
@@ -234,4 +243,25 @@ func (a *App) selectDatabase(db int) {
 	a.currentDB = db
 	a.keyBrowser.LoadKeys()
 	a.editor.Clear()
+}
+
+func (a *App) loadIcon() {
+	// Try to load icon from various locations
+	locations := []string{
+		"icon.png",
+		filepath.Join(".", "icon.png"),
+	}
+
+	// Get executable path and check there too
+	if execPath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(execPath)
+		locations = append(locations, filepath.Join(execDir, "icon.png"))
+	}
+
+	for _, path := range locations {
+		if data, err := os.ReadFile(path); err == nil {
+			a.appIcon = fyne.NewStaticResource("icon.png", data)
+			return
+		}
+	}
 }
