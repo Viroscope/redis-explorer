@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -15,16 +16,18 @@ import (
 
 // App represents the main application
 type App struct {
-	fyneApp    fyne.App
-	window     fyne.Window
-	sidebar    *Sidebar
-	keyBrowser *KeyBrowser
-	editor     *ValueEditor
-	serverInfo *ServerInfo
-	client     *redis.Client
-	connected  bool
-	currentDB  int
-	appIcon    fyne.Resource
+	fyneApp       fyne.App
+	window        fyne.Window
+	sidebar       *Sidebar
+	keyBrowser    *KeyBrowser
+	editor        *ValueEditor
+	serverInfo    *ServerInfo
+	client        *redis.Client
+	connected     bool
+	currentDB     int
+	appIcon       fyne.Resource
+	refreshTicker *time.Ticker
+	stopRefresh   chan struct{}
 }
 
 // NewApp creates a new application instance
@@ -128,7 +131,13 @@ func (a *App) createMenu() *fyne.MainMenu {
 	// File menu
 	fileMenu := fyne.NewMenu("File",
 		fyne.NewMenuItem("Settings", func() {
-			ShowSettingsDialog(a.window, nil)
+			ShowSettingsDialog(a.window, func() {
+				// Restart auto-refresh with new settings
+				if a.connected {
+					a.stopAutoRefresh()
+					a.startAutoRefresh()
+				}
+			})
 		}),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Quit", func() {
@@ -203,6 +212,9 @@ func (a *App) connect(conn models.ServerConnection) {
 	a.keyBrowser.LoadKeys()
 	a.serverInfo.Refresh()
 
+	// Start auto-refresh if configured
+	a.startAutoRefresh()
+
 	// Save last connection
 	config.SetLastConnection(conn.ID)
 }
@@ -211,6 +223,9 @@ func (a *App) disconnect() {
 	if !a.connected {
 		return
 	}
+
+	// Stop auto-refresh
+	a.stopAutoRefresh()
 
 	if a.client != nil {
 		a.client.Disconnect()
@@ -263,5 +278,45 @@ func (a *App) loadIcon() {
 			a.appIcon = fyne.NewStaticResource("icon.png", data)
 			return
 		}
+	}
+}
+
+// startAutoRefresh starts the auto-refresh ticker if configured
+func (a *App) startAutoRefresh() {
+	cfg := config.Get()
+	if cfg.AutoRefreshSecs <= 0 {
+		return
+	}
+
+	a.stopRefresh = make(chan struct{})
+	a.refreshTicker = time.NewTicker(time.Duration(cfg.AutoRefreshSecs) * time.Second)
+
+	go func() {
+		for {
+			select {
+			case <-a.refreshTicker.C:
+				if a.connected {
+					// Update UI on main thread (silent to avoid loading bar)
+					fyne.Do(func() {
+						a.keyBrowser.LoadKeysSilent()
+						a.serverInfo.Refresh()
+					})
+				}
+			case <-a.stopRefresh:
+				return
+			}
+		}
+	}()
+}
+
+// stopAutoRefresh stops the auto-refresh ticker
+func (a *App) stopAutoRefresh() {
+	if a.refreshTicker != nil {
+		a.refreshTicker.Stop()
+		a.refreshTicker = nil
+	}
+	if a.stopRefresh != nil {
+		close(a.stopRefresh)
+		a.stopRefresh = nil
 	}
 }

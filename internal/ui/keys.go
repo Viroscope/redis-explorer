@@ -589,6 +589,15 @@ func (kb *KeyBrowser) SetClient(client *redis.Client) {
 
 // LoadKeys loads keys from the connected Redis server asynchronously
 func (kb *KeyBrowser) LoadKeys() {
+	kb.loadKeysInternal(false)
+}
+
+// LoadKeysSilent loads keys without showing the loading bar (for auto-refresh)
+func (kb *KeyBrowser) LoadKeysSilent() {
+	kb.loadKeysInternal(true)
+}
+
+func (kb *KeyBrowser) loadKeysInternal(silent bool) {
 	if kb.client == nil {
 		kb.keys = nil
 		kb.filteredKeys = nil
@@ -611,10 +620,12 @@ func (kb *KeyBrowser) LoadKeys() {
 	}
 
 	kb.isLoading = true
-	kb.loadingBar.Show()
-	kb.loadingBar.Start()
-	if kb.countLabel != nil {
-		kb.countLabel.SetText("Loading...")
+	if !silent {
+		kb.loadingBar.Show()
+		kb.loadingBar.Start()
+		if kb.countLabel != nil {
+			kb.countLabel.SetText("Loading...")
+		}
 	}
 
 	// Load keys in background goroutine
@@ -624,14 +635,18 @@ func (kb *KeyBrowser) LoadKeys() {
 		// Update UI on main thread using fyne.Do
 		fyne.Do(func() {
 			kb.isLoading = false
-			kb.loadingBar.Stop()
-			kb.loadingBar.Hide()
+			if !silent {
+				kb.loadingBar.Stop()
+				kb.loadingBar.Hide()
+			}
 
 			if err != nil {
 				if kb.countLabel != nil {
 					kb.countLabel.SetText("Error")
 				}
-				ShowErrorDialog(kb.window, "Error loading keys", err)
+				if !silent {
+					ShowErrorDialog(kb.window, "Error loading keys", err)
+				}
 				return
 			}
 
